@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>オリジナルカスタムスロット</title>
+<style>
+*,*::before,*::after{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:"Arial Black",Arial,sans-serif;}
+#stage{position:fixed;inset:0;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+#game{position:absolute;width:1920px;height:1080px;overflow:hidden;transform-origin:center center;}
+#bg{position:absolute;inset:0;z-index:0;}
+#bg img{width:1920px;height:1080px;display:block;}
+
+/* ===== REEL (幅280px) ===== */
+.reel-unit{
+  position:absolute;top:112px;
+  width:280px;height:855px;
+  overflow:hidden;z-index:10;border-radius:6px;
+}
+
+/* 各リールの横位置 */
+.reel-unit:nth-child(2) { left: 40px; }
+.reel-unit:nth-child(3) { left: 520px; }
+.reel-unit:nth-child(4) { left: 800px; }
+.reel-unit:nth-child(5) { left: 1280px; }
+
+.reel-strip{
+  position:absolute;top:0;left:0;
+  width:280px;
+}
+.reel-strip.spinning{
+  animation:reelSpin linear infinite;
+}
+@keyframes reelSpin{
+  from{transform:translateY(-4560px);}
+  to{transform:translateY(0px);}
+}
+
+.reel-cell{
+  width:280px;height:285px;
+  display:flex;align-items:center;justify-content:center;
+  overflow:hidden;
+}
+.reel-cell img{
+  width:222px;height:222px;object-fit:contain;
+  display:block;
+  pointer-events:none;user-select:none;
+}
+
+/* シャドウ・ガラス表現・枠 */
+.reel-surface{
+  position:absolute;inset:0;z-index:20;pointer-events:none;
+  background:linear-gradient(to bottom, 
+    rgba(0,0,0,0.45) 0%,
+    transparent 28%,
+    transparent 72%,
+    rgba(0,0,0,0.45) 100%
+  );
+}
+.reel-frame{
+  position:absolute;inset:-2px;z-index:25;pointer-events:none;
+  border:2px solid rgba(0,0,0,0.15);border-radius:8px;
+  box-shadow:0 10px 35px rgba(0,0,0,0.6);
+}
+
+/* リール停止時フラッシュアニメ */
+.reel-unit.just-stopped .reel-frame{
+  animation:reelStop 0.5s cubic-bezier(0.1, 0.8, 0.3, 1) forwards;
+}
+@keyframes reelStop{
+  0%{ border-color:rgba(255,40,60,0.9); box-shadow:0 10px 35px rgba(0,0,0,0.6), 0 0 70px rgba(220,0,40,0.8); }
+  100%{ border-color:rgba(0,0,0,0.15); box-shadow:0 10px 35px rgba(0,0,0,0.6); }
+}
+
+/* リーチ中リールのアニメーション */
+.reel-unit.reach-reel .reel-frame{
+  border-color:rgba(220,0,40,0.9);
+  animation:reachReel 0.5s ease-in-out infinite alternate;
+}
+@keyframes reachReel{
+  from{ box-shadow:0 10px 35px rgba(0,0,0,0.6), 0 0 20px rgba(220,0,40,0.4); }
+  to{ box-shadow:0 10px 35px rgba(0,0,0,0.6), 0 0 80px rgba(255,0,40,1.0); }
+}
+
+/* 停止時のセル白フラッシュ */
+.cell-flash{
+  position:absolute;inset:0;z-index:10;pointer-events:none;
+  animation:cellFlash 0.5s cubic-bezier(0.1,0.8,0.3,1) forwards;
+}
+@keyframes cellFlash{
+  0%{background:rgba(255,255,200,0.7);}
+  100%{background:transparent;}
+}
+
+/* 停止バウンスアニメーション */
+.reel-bounce{
+  animation:reelBounce var(--bounce-dur, 0.4s) cubic-bezier(0.12, 0.85, 0.35, 1) forwards;
+}
+@keyframes reelBounce{
+  0%{transform:translateY(calc(var(--final-ty) - 32px));}
+  35%{transform:translateY(calc(var(--final-ty) + 12px));}
+  60%{transform:translateY(calc(var(--final-ty) - 6px));}
+  100%{transform:translateY(var(--final-ty));}
+}
+
+/* ===== EFFECT OVERLAYS ===== */
+#win-line{
+  position:absolute;top:539px;left:40px;width:1520px;height:4px;
+  transform:translateY(-50%);z-index:30;pointer-events:none;
+  background:rgba(220,0,40,0.85);
+  box-shadow:0 0 10px 3px rgba(220,0,40,0.5);
+  visibility:hidden;
+}
+#win-line.active{
+  visibility:visible;
+  animation:wlWin 0.28s ease-in-out infinite alternate;
+}
+@keyframes wlWin{
+  from{box-shadow:0 0 12px 4px rgba(220,0,40,0.6);opacity:0.8;}
+  to{box-shadow:0 0 50px 20px rgba(255,0,40,1.0);opacity:1;}
+}
+
+#reach-overlay{
+  position:absolute;inset:0;z-index:80;pointer-events:none;
+  display:none;overflow:hidden;
+}
+#reach-overlay.active{ display:block; }
+#reach-img{
+  position:absolute;top:50%;left:1920px;transform:translateY(-50%);
+  height:1050px;width:auto;
+  filter:drop-shadow(0 0 30px rgba(220,0,40,0.85));
+}
+@keyframes reachSlide {
+  0% { left: 1920px; opacity: 0; }
+  8% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { left: -5512px; opacity: 0; }
+}
+
+#win-overlay{
+  position:absolute;inset:0;z-index:90;pointer-events:none;
+  display:flex;align-items:center;justify-content:center;
+  opacity:0;transition:opacity 0.3s;
+  background:rgba(0,0,0,0.35);
+}
+#win-overlay.active{opacity:1;}
+#win-text{
+  font-size:120px;font-weight:900;text-align:center;
+  transform:scale(0);transition:transform 0.4s cubic-bezier(0.175,0.885,0.32,1.275);
+  text-shadow:
+    0 0 20px currentColor,
+    0 0 60px currentColor,
+    0 5px 0 rgba(0,0,0,0.8);
+}
+#win-overlay.active #win-text{transform:scale(1);}
+.t-jackpot{color:#FF4500;-webkit-text-stroke:3px rgba(255,215,0,0.6);}
+
+#flash-overlay{
+  position:absolute;inset:0;z-index:95;pointer-events:none;opacity:0;background:#fff;
+}
+#flash-overlay.do-flash{ animation:doFlash 0.55s ease forwards; }
+@keyframes doFlash{
+  0%{opacity:0;}
+  15%{opacity:0.85;}
+  42%{opacity:0;}
+  58%{opacity:0.45;}
+  100%{opacity:0;}
+}
+
+#particles{position:absolute;inset:0;z-index:85;pointer-events:none;overflow:hidden;}
+.pt{position:absolute;pointer-events:none;animation:ptFall linear forwards;}
+@keyframes ptFall{
+  0%{transform:translateY(-80px) rotate(0deg);opacity:1;}
+  100%{transform:translateY(1160px) rotate(540deg);opacity:0;}
+}
+
+#status-text{
+  position:absolute;bottom:200px;left:0;right:0;text-align:center;
+  font-size:28px;font-weight:900;letter-spacing:4px;color:#fff;
+  text-shadow:0 2px 8px rgba(0,0,0,0.95);
+  z-index:50;pointer-events:none;
+}
+#status-text.st-reach{
+  color:#FF2244;
+  text-shadow:0 0 22px rgba(255,34,68,0.95), 0 2px 8px rgba(0,0,0,0.95);
+}
+#status-text.st-win{
+  color:#FFD700;
+  text-shadow:0 0 22px rgba(255,200,0,0.95), 0 2px 8px rgba(0,0,0,0.95);
+}
+
+/* ===== UI PANEL (中央ボタン・両脇カウンター) ===== */
+#ui-panel{
+  position:absolute;bottom:0;left:0;right:0;height:160px;z-index:50;
+  display:flex;align-items:center;justify-content:center;gap:80px;padding:0 80px;
+  background:linear-gradient(to top, rgba(0,0,0,0.90) 0%, rgba(0,0,0,0.50) 65%, transparent 100%);
+}
+.info-box{display:flex;flex-direction:column;align-items:center;gap:4px;min-width:180px;}
+.info-label{font-size:12px;letter-spacing:2px;color:rgba(255,255,255,0.40);text-transform:uppercase;text-align:center;}
+.info-value{font-size:48px;font-weight:900;color:#fff;letter-spacing:2px;line-height:1;}
+.info-value.v-gold{color:#FFD700;}
+.info-value.v-red{color:#FF2244;}
+
+#main-btn{
+  position:relative;width:260px;height:72px;
+  background:linear-gradient(160deg, #aa001f 0%, #EE1133 50%, #aa001f 100%);
+  border:none;border-radius:60px;cursor:pointer;
+  font-family:inherit;font-weight:900;font-size:22px;letter-spacing:3px;color:#fff;
+  text-transform:uppercase;
+  box-shadow:0 5px 0 #60000d, 0 8px 24px rgba(170,0,30,0.55);
+  transition:transform 0.08s, box-shadow 0.08s;
+  overflow:hidden;
+  pointer-events:auto;
+}
+#main-btn::before{
+  content:"";position:absolute;top:5px;left:18%;right:18%;height:30%;
+  background:rgba(255,255,255,0.16);border-radius:20px;pointer-events:none;
+}
+#main-btn:hover:not(:disabled){transform:translateY(-2px);}
+#main-btn:active:not(:disabled){transform:translateY(4px);}
+#main-btn:disabled{opacity:0.32;cursor:default;}
+
+/* ストップインジケータ（幅280px） */
+.stop-ind{
+  position:absolute;top:981px;width:280px;text-align:center;
+  font-size:14px;font-weight:700;letter-spacing:3px;color:transparent;
+  transition:color 0.2s;z-index:40;pointer-events:none;
+  cursor:pointer;
+}
+.stop-ind:nth-of-type(1) { left: 40px; }
+.stop-ind:nth-of-type(2) { left: 520px; }
+.stop-ind:nth-of-type(3) { left: 800px; }
+.stop-ind:nth-of-type(4) { left: 1280px; }
+
+.stop-ind.si-active{
+  color:rgba(255,34,68,0.9);
+  animation:siBlink 0.5s ease infinite alternate;
+  pointer-events:auto;
+}
+@keyframes siBlink{ from{opacity:0.35;} to{opacity:1;} }
+.stop-ind.si-done{color:rgba(255,200,0,0.60);}
+
+#speed-panel{
+  position:absolute;bottom:20px;right:24px;z-index:55;
+  display:flex;gap:8px;align-items:center;pointer-events:auto;
+}
+.spd-lbl{font-size:11px;color:rgba(255,255,255,0.28);letter-spacing:2px;margin-right:4px;}
+.spd-btn{
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.10);
+  color:rgba(255,255,255,0.30);font-family:inherit;font-size:11px;font-weight:700;
+  letter-spacing:2px;padding:6px 14px;border-radius:3px;cursor:pointer;transition:all 0.2s;
+}
+.spd-btn.active, .spd-btn:hover{
+  background:rgba(220,0,40,0.12);border-color:rgba(220,0,40,0.50);color:#FF4466;
+}
+
+#reset-btn{
+  position:absolute;bottom:20px;left:24px;z-index:55;
+  background:rgba(255,255,255,0.04);border:1px solid rgba(255,255,255,0.09);
+  color:rgba(255,255,255,0.28);font-family:inherit;font-size:11px;font-weight:700;
+  letter-spacing:2px;padding:6px 16px;border-radius:3px;cursor:pointer;transition:all 0.2s;
+  text-transform:uppercase;pointer-events:auto;
+}
+#reset-btn:hover{color:rgba(255,255,255,0.65);border-color:rgba(255,255,255,0.28);}
+
+#key-hint{
+  position:absolute;bottom:200px;left:24px;z-index:50;
+  font-size:11px;color:rgba(255,255,255,0.22);letter-spacing:1px;line-height:1.9;
+}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="game">
+    <div id="bg"><img src="images/body.png" alt="背景"></div>
+    
+    <div class="reel-unit"><div class="reel-strip" id="strip-0"></div><div class="reel-surface"></div><div class="reel-frame"></div></div>
+    <div class="reel-unit"><div class="reel-strip" id="strip-1"></div><div class="reel-surface"></div><div class="reel-frame"></div></div>
+    <div class="reel-unit"><div class="reel-strip" id="strip-2"></div><div class="reel-surface"></div><div class="reel-frame"></div></div>
+    <div class="reel-unit"><div class="reel-strip" id="strip-3"></div><div class="reel-surface"></div><div class="reel-frame"></div></div>
+    
+    <div id="win-line"></div>
+    
+    <div class="stop-ind" data-idx="0">▲ STOP</div>
+    <div class="stop-ind" data-idx="1">▲ STOP</div>
+    <div class="stop-ind" data-idx="2">▲ STOP</div>
+    <div class="stop-ind" data-idx="3">▲ STOP</div>
+    
+    <div id="reach-overlay"><img id="reach-img" src="images/chance.png" alt="チャンス"></div>
+    <div id="win-overlay"><div id="win-text"></div></div>
+    <div id="flash-overlay"></div>
+    <div id="particles"></div>
+    
+    <div id="status-text">ほっかほっか亭スロットに挑戦！</div>
+    
+    <div id="ui-panel">
+      <div class="info-box"><div class="info-label">Total Spins</div><div id="val-total-spins" class="info-value">0</div></div>
+      <div class="info-box"><div class="info-label">Since Last Hit</div><div id="val-since-hit" class="info-value v-red">0</div></div>
+      <button id="main-btn">SPIN</button>
+      <div class="info-box"><div class="info-label">Total Hits</div><div id="val-total-hits" class="info-value v-gold">0</div></div>
+    </div>
+    
+    <div id="speed-panel">
+      <span class="spd-lbl">SPEED:</span>
+      <button class="spd-btn active" data-speed="normal">NORM</button>
+      <button class="spd-btn" data-speed="fast">FAST</button>
+    </div>
+    <button id="reset-btn">RESET</button>
+    
+    <div id="key-hint">ENTER: SPIN / STOP ALL<br>1, 2, 3, 4: STOP REELS</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  // ===== 1. 絵柄データ =====
+  const ICONS = {
+    0: { name: 'HO',     img: 'images/ho.png' },
+    1: { name: 'KA',     img: 'images/ka.png' },
+    2: { name: 'MU',     img: 'images/mu.png' },
+    3: { name: 'TO',     img: 'images/to.png' },
+    4: { name: 'TSU',    img: 'images/tsu.png' },
+    5: { name: 'YO',     img: 'images/yo.png' },
+    6: { name: 'MO',     img: 'images/mo.png' },
+    7: { name: 'A',      img: 'images/a.png' }
+  };
+
+  const TARGET_STOP_INDICES = [15, 15, 15, 15];
+
+  const REEL_STRIPS = [
+    [0,2,3,4,5,6,7,1,0,3,5,2,4,6,7,1],
+    [1,3,4,5,6,7,0,2,1,4,6,3,5,7,0,2],
+    [0,4,5,6,7,1,2,3,0,5,7,4,6,1,2,3],
+    [1,5,6,7,0,2,3,4,1,6,0,5,7,2,3,4]
+  ];
+
+  // ===== 🔊 音声ファイル =====
+  const SOUNDS = {
+    fast:    new Audio('sounds/fast.mp3'),
+    second:  new Audio('sounds/second.mp3'),
+    reach:   new Audio('sounds/reach.mp3'),
+    finish:  new Audio('sounds/finish.mp3'),
+    jackpot: new Audio('sounds/jackpot.mp3'),
+    fanfare: new Audio('sounds/fanfare.mp3')
+  };
+
+  function playSound(audio) {
+    audio.currentTime = 0;
+    audio.play().catch(e => console.log("Audio play blocked."));
+  }
+
+  function stopSound(audio) {
+    audio.pause();
+    audio.currentTime = 0;
+  }
+
+  // ===== 2. 状態管理変数 =====
+  let totalSpins = 0;
+  let totalHits = 0;
+  let sinceLastHit = 0;
+
+  let phase = 'idle'; 
+  let speedMode = 'normal'; 
+  let spinStartTimes = [0, 0, 0, 0];
+  let reelStopped = [true, true, true, true];
+  let stopQueue = [];
+  let resultIndices = [0, 0, 0, 0];
+  let currentHitStreak = true;
+  let isButtonLocked = false; 
+
+  // ===== 3. DOMキャッシュ =====
+  const elGame = document.getElementById('game');
+  const elMainBtn = document.getElementById('main-btn');
+  const elStatus = document.getElementById('status-text');
+  const elWinLine = document.getElementById('win-line');
+  const elReachOv = document.getElementById('reach-overlay');
+  const elReachImg = document.getElementById('reach-img');
+  const elWinOv = document.getElementById('win-overlay');
+  const elWinTxt = document.getElementById('win-text');
+  const elFlashOv = document.getElementById('flash-overlay');
+  const elPts = document.getElementById('particles');
+  
+  const elTotalSpins = document.getElementById('val-total-spins');
+  const elSinceHit = document.getElementById('val-since-hit');
+  const elTotalHits = document.getElementById('val-total-hits');
+
+  const reelUnits = document.querySelectorAll('.reel-unit');
+  const stripElements = [
+    document.getElementById('strip-0'), 
+    document.getElementById('strip-1'), 
+    document.getElementById('strip-2'),
+    document.getElementById('strip-3')
+  ];
+  const indEls = document.querySelectorAll('.stop-ind');
+
+  // ===== 4. 初期化 =====
+  function init() {
+    window.addEventListener('resize', resizeStage);
+    resizeStage();
+    
+    stripElements.forEach((strip, rIdx) => {
+      const fullList = [...REEL_STRIPS[rIdx], ...REEL_STRIPS[rIdx]];
+      strip.innerHTML = fullList.map(id => `<div class="reel-cell"><img src="${ICONS[id].img}" alt=""></div>`).join('');
+    });
+
+    elMainBtn.addEventListener('click', handleMainAction);
+
+    indEls.forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = parseInt(el.getAttribute('data-idx'));
+        if (phase === 'spinning' || phase === 'reach') stopReel(idx);
+      });
+    });
+
+    document.getElementById('reset-btn').addEventListener('click', resetGame);
+    
+    document.querySelectorAll('.spd-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        document.querySelectorAll('.spd-btn').forEach(b => b.classList.remove('active'));
+        e.target.classList.add('active');
+        speedMode = e.target.getAttribute('data-speed');
+      });
+    });
+
+    document.addEventListener('keydown', handleKeyDown);
+    updateCounterUI();
+  }
+
+  function resizeStage() {
+    const sw = window.innerWidth, sh = window.innerHeight;
+    const scale = Math.min(sw / 1920, sh / 1080);
+    elGame.style.transform = `scale(${scale})`;
+  }
+
+  // ===== 5. コアロジック =====
+  function handleMainAction() {
+    if (phase === 'idle') {
+      startSpin();
+    } else if (phase === 'spinning' || phase === 'reach') {
+      stopNextAvailable();
+    } else if (phase === 'winPresentation') {
+      clearWinPresentation();
+    }
+  }
+
+  function startSpin() {
+    totalSpins++;
+    sinceLastHit++;
+    updateCounterUI();
+
+    elWinLine.classList.remove('active');
+    elWinOv.classList.remove('active');
+    elStatus.className = '';
+    setStatus('ほっかほっか亭スロットに挑戦！');
+    
+    phase = 'spinning';
+    stopQueue = [];
+    currentHitStreak = true; 
+    isButtonLocked = false; 
+    elMainBtn.disabled = false;
+    elMainBtn.textContent = 'STOP ALL';
+    
+    Object.values(SOUNDS).forEach(stopSound);
+
+    const now = performance.now();
+    stripElements.forEach((strip, i) => {
+      spinStartTimes[i] = now;
+      reelStopped[i] = false;
+      strip.style.transform = '';
+      strip.classList.remove('reel-bounce');
+      strip.classList.add('spinning');
+      strip.style.animationDuration = (speedMode === 'fast') ? '0.18s' : '0.38s';
+      
+      indEls[i].className = 'stop-ind si-active';
+      reelUnits[i].classList.remove('just-stopped', 'reach-reel');
+    });
+  }
+
+  function stopReel(idx) {
+    if (reelStopped[idx]) return;
+    if (isButtonLocked) return; 
+    
+    reelStopped[idx] = true;
+    stopQueue.push(idx);
+    
+    const strip = stripElements[idx];
+    strip.classList.remove('spinning');
+    
+    const stopIdx = TARGET_STOP_INDICES[idx];
+    resultIndices[idx] = stopIdx;
+    
+    const cellHeight = 285;
+    const finalTy = -(stopIdx * cellHeight);
+    
+    strip.style.setProperty('--final-ty', `${finalTy}px`);
+    strip.style.setProperty('--bounce-dur', (speedMode === 'fast') ? '0.2s' : '0.4s');
+    void strip.offsetWidth;
+    strip.classList.add('reel-bounce');
+    
+    indEls[idx].className = 'stop-ind si-done';
+    
+    const flash = document.createElement('div');
+    flash.className = 'cell-flash';
+    reelUnits[idx].appendChild(flash);
+    setTimeout(() => flash.remove(), 500);
+    
+    reelUnits[idx].classList.add('just-stopped');
+
+    const stoppedSymbolId = REEL_STRIPS[idx][(resultIndices[idx] + 1) % REEL_STRIPS[idx].length];
+
+    // ===== 🔊 音声・演出再生タイムライン =====
+    if (stopQueue.length === 1) {
+      playSound(SOUNDS.fast); 
+      if (stoppedSymbolId !== 0) { currentHitStreak = false; } 
+
+    } else if (stopQueue.length === 2) {
+      if (currentHitStreak && stoppedSymbolId === 1) { 
+        playSound(SOUNDS.second); 
+      } else {
+        currentHitStreak = false;
+        playSound(SOUNDS.fast);
+      }
+
+    } else if (stopQueue.length === 3) {
+      playSound(SOUNDS.fast); 
+      
+      if (currentHitStreak && stoppedSymbolId === 0) { 
+        phase = 'reach';
+        setStatus('🔥 リーチ！！！ 🔥', 'st-reach');
+        reelUnits[3].classList.add('reach-reel');
+        
+        isButtonLocked = true;
+        elMainBtn.disabled = true;
+        indEls[3].className = 'stop-ind'; 
+
+        setTimeout(() => {
+          if (phase === 'reach') { 
+            playSound(SOUNDS.reach); 
+            
+            elReachOv.classList.add('active');
+            elReachImg.style.animation = 'none';
+            void elReachImg.offsetWidth;
+            elReachImg.style.animation = 'reachSlide 1.8s linear forwards';
+            
+            setTimeout(() => {
+              elReachOv.classList.remove('active');
+              if (phase === 'reach') {
+                isButtonLocked = false; 
+                elMainBtn.disabled = false; 
+                indEls[3].className = 'stop-ind si-active'; 
+              }
+            }, 1800);
+          } 
+        }, 400);
+
+      } else {
+        currentHitStreak = false;
+      }
+
+    } else if (stopQueue.length === 4) {
+      playSound(SOUNDS.second); 
+      playSound(SOUNDS.finish); 
+      evaluateGameResult(stoppedSymbolId);
+    }
+  }
+
+  function stopNextAvailable() {
+    if (isButtonLocked) return; 
+    for (let i = 0; i < 4; i++) {
+      if (!reelStopped[i]) { stopReel(i); break; }
+    }
+  }
+
+  function evaluateGameResult(lastSymbolId) {
+    elMainBtn.disabled = true;
+    reelUnits.forEach(u => u.classList.remove('reach-reel'));
+    
+    const isJackpot = (currentHitStreak && lastSymbolId === 1);
+    
+    setTimeout(() => {
+      elMainBtn.disabled = false;
+      if (isJackpot) {
+        triggerWinPresentation();
+      } else {
+        setStatus('😞 ハズレ... もう一度！');
+        phase = 'idle';
+        resetIndicators();
+      }
+    }, 600);
+  }
+
+  function triggerWinPresentation() {
+    phase = 'winPresentation';
+    
+    totalHits++;
+    sinceLastHit = 0; 
+    updateCounterUI();
+    
+    elWinLine.classList.add('active');
+    setStatus('🎉 大当り!! HO-KA-HO-KA！ 🎉', 'st-win');
+    elWinTxt.textContent = 'JACKPOT!!';
+    elWinTxt.className = 't-jackpot';
+    
+    elWinOv.classList.add('active');
+    triggerScreenFlash();
+    spawnParticles(80);
+    elMainBtn.textContent = 'OK';
+
+    setTimeout(() => {
+      playSound(SOUNDS.jackpot); 
+      
+      setTimeout(() => {
+        if (phase === 'winPresentation') { playSound(SOUNDS.fanfare); }
+      }, 1500); 
+      
+    }, 800);
+  }
+
+  function clearWinPresentation() {
+    stopSound(SOUNDS.jackpot);
+    stopSound(SOUNDS.fanfare);
+
+    elWinOv.classList.remove('active');
+    elWinLine.classList.remove('active');
+    elPts.innerHTML = '';
+    phase = 'idle';
+    resetIndicators();
+  }
+
+  // ===== 6. ユーティリティ =====
+  function setStatus(txt, cls = '') {
+    elStatus.textContent = txt;
+    elStatus.className = cls;
+  }
+
+  function updateCounterUI() {
+    elTotalSpins.textContent = totalSpins;
+    elSinceHit.textContent = sinceLastHit;
+    elTotalHits.textContent = totalHits;
+  }
+
+  function resetIndicators() {
+    indEls.forEach(el => { el.className = 'stop-ind'; el.textContent = '▲ STOP'; });
+    elMainBtn.textContent = 'SPIN';
+    isButtonLocked = false;
+  }
+
+  function triggerScreenFlash() {
+    elFlashOv.classList.remove('do-flash');
+    void elFlashOv.offsetWidth;
+    elFlashOv.classList.add('do-flash');
+  }
+
+  function spawnParticles(n) {
+    elPts.innerHTML = '';
+    const icons = ['⭐','💫','✨','🎉','🎊','🌟','💥'];
+    for (let i = 0; i < n; i++) {
+      setTimeout(() => {
+        const p = document.createElement('div');
+        p.className = 'pt';
+        p.textContent = icons[Math.floor(Math.random() * icons.length)];
+        p.style.left = `${Math.random() * 1920}px`;
+        p.style.fontSize = `${20 + Math.random() * 40}px`;
+        p.style.animationDuration = `${1.6 + Math.random() * 2.5}s`;
+        p.style.animationDelay = `${Math.random() * 0.4}s`;
+        elPts.appendChild(p);
+        setTimeout(() => p.remove(), 5500);
+      }, i * 22);
+    }
+  }
+
+  function handleKeyDown(e) {
+    if (e.repeat) return;
+    
+    // 💡【修正】Enterキー用の操作に一本化
+    if (e.key === 'Enter') { 
+      e.preventDefault(); // Enter本来のスクロールやフォーム送信をブロック
+      if (isButtonLocked) return; // リーチ演出によるロック中は完全無効
+      handleMainAction(); 
+      return;
+    }
+
+    if (phase === 'spinning' || phase === 'reach') {
+      if (isButtonLocked) return;
+      if (e.key === '1') stopReel(0);
+      if (e.key === '2') stopReel(1);
+      if (e.key === '3') stopReel(2);
+      if (e.key === '4') stopReel(3);
+    }
+  }
+
+  function resetGame() {
+    if (phase !== 'idle' && phase !== 'winPresentation') return;
+    Object.values(SOUNDS).forEach(stopSound);
+
+    totalSpins = 0; totalHits = 0; sinceLastHit = 0;
+    isButtonLocked = false;
+    updateCounterUI();
+    clearWinPresentation();
+    setStatus("ほっかほっか亭スロットに挑戦！");
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
+</script>
+</body>
+</html>
